@@ -465,6 +465,7 @@ class VMStatsPublisher:
 
     def ping_target(self, target: str) -> Dict:
         """Ping a target and return metrics"""
+        self.logger.debug(f"Pinging {target} with {self.ping_count} packets, timeout {self.ping_timeout}s")
         try:
             # Execute ping command
             cmd = ["ping", "-c", str(self.ping_count), "-W", str(self.ping_timeout), target]
@@ -525,6 +526,12 @@ class VMStatsPublisher:
 
             # Determine if target is up (at least one packet received)
             up = 1 if packets_received > 0 else 0
+
+            # Log ping result
+            if up:
+                self.logger.debug(f"Ping {target}: up, avg={latency_avg_ms:.2f}ms, loss={packet_loss_percent:.1f}%")
+            else:
+                self.logger.info(f"Ping {target} failed: {packet_loss_percent:.1f}% packet loss")
 
             return {
                 "up": up,
