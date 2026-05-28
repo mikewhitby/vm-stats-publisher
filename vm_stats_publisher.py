@@ -70,6 +70,16 @@ class VMStatsPublisher:
         )
         self.logger = logging.getLogger(__name__)
 
+        # Log startup configuration
+        self.logger.info(f"Starting VM Stats Publisher")
+        self.logger.info(f"SuperHub URL: {self.superhub_url}")
+        self.logger.info(f"Prometheus URL: {self.prometheus_url if self.prometheus_url else 'None (dry-run mode)'}")
+        self.logger.info(f"Polling interval: {self.interval}s")
+        self.logger.info(f"Mode: {'DRY-RUN' if self.dry_run else 'NORMAL'}")
+        if self.ping_targets:
+            self.logger.info(f"Ping targets: {', '.join(self.ping_targets)}")
+            self.logger.info(f"Ping count: {self.ping_count}, timeout: {self.ping_timeout}s")
+
         # Create SSL context (always insecure for self-signed certificates)
         import ssl
 
@@ -81,11 +91,13 @@ class VMStatsPublisher:
         self.logger.debug(f"Fetching from {url}")
 
         try:
+            start_time = time.time()
             req = urllib.request.Request(url)
             response = urllib.request.urlopen(req, context=self.ssl_context, timeout=30)
+            elapsed = time.time() - start_time
 
             data = json.loads(response.read().decode("utf-8"))
-            self.logger.debug(f"Successfully fetched data from {endpoint}")
+            self.logger.debug(f"Successfully fetched data from {endpoint} (HTTP {response.status}) in {elapsed:.2f}s")
             return data
         except urllib.error.URLError as e:
             self.logger.error(f"Failed to fetch from {url}: {e}")
@@ -233,6 +245,7 @@ class VMStatsPublisher:
                         )
                     )
 
+        self.logger.debug(f"Parsed {len(metrics)} downstream metrics")
         return metrics
 
     def parse_upstream(self, data: Dict) -> List[str]:
@@ -367,6 +380,7 @@ class VMStatsPublisher:
                         )
                     )
 
+        self.logger.debug(f"Parsed {len(metrics)} upstream metrics")
         return metrics
 
     def parse_serviceflows(self, data: Dict) -> List[str]:
@@ -412,6 +426,7 @@ class VMStatsPublisher:
                 )
             )
 
+        self.logger.debug(f"Parsed {len(metrics)} serviceflow metrics")
         return metrics
 
     def publish_metrics(self, metrics: List[str]) -> bool:
@@ -426,17 +441,20 @@ class VMStatsPublisher:
         self.logger.debug(f"Publishing {len(metrics)} metrics to {self.prometheus_url}")
 
         try:
+            start_time = time.time()
             req = urllib.request.Request(
                 self.prometheus_url,
                 data=payload.encode("utf-8"),
                 headers={"Content-Type": "text/plain"},
             )
             response = urllib.request.urlopen(req, timeout=30)
+            elapsed = time.time() - start_time
+
             if 200 <= response.status < 300:
-                self.logger.debug(f"Successfully published metrics: {response.status}")
+                self.logger.debug(f"Successfully published metrics: HTTP {response.status} in {elapsed:.2f}s")
                 return True
             else:
-                self.logger.error(f"Failed to publish metrics: HTTP {response.status}")
+                self.logger.error(f"Failed to publish metrics: HTTP {response.status} in {elapsed:.2f}s")
                 return False
         except urllib.error.URLError as e:
             self.logger.error(f"Failed to publish metrics: {e}")
@@ -547,6 +565,7 @@ class VMStatsPublisher:
     def run_once(self) -> bool:
         """Run a single polling cycle"""
         self.logger.info("Starting poll cycle")
+        start_time = time.time()
 
         metrics = []
 
@@ -623,6 +642,8 @@ class VMStatsPublisher:
         success = self.publish_metrics(metrics)
 
         if success:
+            elapsed = time.time() - start_time
+            self.logger.debug(f"Poll cycle completed in {elapsed:.2f}s")
             self.logger.info("Poll cycle completed successfully")
         else:
             self.logger.error("Poll cycle failed")
@@ -631,12 +652,6 @@ class VMStatsPublisher:
 
     def run(self):
         """Run continuous polling loop"""
-        self.logger.info("Starting VM Stats Publisher")
-        self.logger.info(f"SuperHub URL: {self.superhub_url}")
-        self.logger.info(f"Prometheus URL: {self.prometheus_url if self.prometheus_url else 'N/A (dry-run mode)'}")
-        self.logger.info(f"Polling interval: {self.interval}s")
-        self.logger.info(f"Dry run: {self.dry_run}")
-
         while True:
             try:
                 self.run_once()
