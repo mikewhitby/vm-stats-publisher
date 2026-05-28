@@ -653,6 +653,7 @@ class VMStatsPublisher:
     def run(self):
         """Run continuous polling loop"""
         while True:
+            cycle_start = time.time()
             try:
                 self.run_once()
             except KeyboardInterrupt:
@@ -661,8 +662,16 @@ class VMStatsPublisher:
             except Exception as e:
                 self.logger.error(f"Unexpected error in poll cycle: {e}")
 
-            self.logger.debug(f"Waiting {self.interval}s before next poll")
-            time.sleep(self.interval)
+            # Calculate remaining time to next interval boundary
+            elapsed = time.time() - cycle_start
+            remaining = self.interval - elapsed
+            if remaining > 0:
+                self.logger.debug(f"Waiting {remaining:.2f}s before next poll")
+                time.sleep(remaining)
+            else:
+                self.logger.warning(f"Poll cycle took {elapsed:.2f}s, exceeding interval of {self.interval}s")
+                # Sleep a small amount to prevent tight loop if cycle consistently exceeds interval
+                time.sleep(0.1)
 
 
 def main():
