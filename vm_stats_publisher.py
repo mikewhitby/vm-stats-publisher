@@ -459,7 +459,6 @@ class VMStatsPublisher:
 
             packets_sent = self.ping_count
             packets_received = 0
-            packet_loss_percent = 100.0
             latency_avg_ms = 0.0
             latency_min_ms = 0.0
             latency_max_ms = 0.0
@@ -477,10 +476,6 @@ class VMStatsPublisher:
                             for part in parts:
                                 if "received" in part:
                                     packets_received = int(part.strip().split()[0])
-                            # Extract packet loss
-                            for part in parts:
-                                if "%" in part:
-                                    packet_loss_percent = float(part.strip().replace("%", ""))
                         except (ValueError, IndexError):
                             pass
 
@@ -499,6 +494,12 @@ class VMStatsPublisher:
                             jitter_ms = float(values[3])
                     except (ValueError, IndexError):
                         pass
+
+            # Calculate packet loss from actual sent/received counts
+            if packets_sent > 0:
+                packet_loss_percent = ((packets_sent - packets_received) / packets_sent) * 100
+            else:
+                packet_loss_percent = 100.0
 
             # Determine if target is up (at least one packet received)
             up = 1 if packets_received > 0 else 0
