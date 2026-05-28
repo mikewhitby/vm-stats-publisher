@@ -16,23 +16,26 @@ import urllib.error
 from typing import Dict, List, Optional, Tuple
 
 
-# Modulation mapping: code -> (name, order)
+# Modulation mapping: code -> numeric order
 MODULATION_MAP = {
-    "qpsk": ("QPSK", 4),
-    "qam_8": ("QAM8", 8),
-    "qam_16": ("QAM16", 16),
-    "qam_32": ("QAM32", 32),
-    "qam_64": ("QAM64", 64),
-    "qam_128": ("QAM128", 128),
-    "qam_256": ("QAM256", 256),
-    "qam_512": ("QAM512", 512),
-    "qam_1024": ("QAM1024", 1024),
-    "qam_2048": ("QAM2048", 2048),
-    "qam_4096": ("QAM4096", 4096),
-    "other": ("rs46", 0),
-    "unsupported": ("c_st30", 0),
-    "error": ("c_st30", 0),
-    "unknown": ("c_cd04", 0),
+    "qpsk": 4,
+    "qam_8": 8,
+    "qam_16": 16,
+    "qam_32": 32,
+    "qam_64": 64,
+    "qam_128": 128,
+    "qam_256": 256,
+    "qam_512": 512,
+    "qam_1024": 1024,
+    "qam_2048": 2048,
+    "qam_4096": 4096,
+}
+
+# FFT type mapping: string -> numeric size
+FFT_SIZE_MAP = {
+    "2K": 2048,
+    "4K": 4096,
+    "8K": 8192,
 }
 
 
@@ -94,9 +97,13 @@ class VMStatsPublisher:
             self.logger.error(f"Unexpected error fetching from {url}: {e}")
             return None
 
-    def map_modulation(self, modulation: str) -> Tuple[str, int]:
-        """Map modulation code to (name, order)"""
-        return MODULATION_MAP.get(modulation, (modulation, 0))
+    def map_modulation(self, modulation: str) -> Optional[int]:
+        """Map modulation code to numeric order, return None for unknown/unsupported"""
+        return MODULATION_MAP.get(modulation)
+
+    def map_fft_size(self, fft_type: str) -> Optional[int]:
+        """Map FFT type string to numeric size, return None for unknown/unsupported"""
+        return FFT_SIZE_MAP.get(fft_type)
 
     def normalize_power(self, power: float, channel_type: str) -> float:
         """Normalize power value - DOCSIS 3.1 channels return 10x values"""
@@ -119,7 +126,7 @@ class VMStatsPublisher:
         for channel in channels:
             channel_id = channel.get("channelId")
             channel_type = channel.get("channelType", "")
-            modulation_name, modulation_order = self.map_modulation(channel.get("modulation", ""))
+            modulation_order = self.map_modulation(channel.get("modulation", ""))
 
             # Determine scheme label
             if channel_type == "ofdm":
@@ -135,26 +142,34 @@ class VMStatsPublisher:
             }
 
             # Modulation order metric (numeric, not a label)
-            metrics.append(
-                self.format_metric(
-                    "cablemodem_downstream_modulation_order",
-                    modulation_order,
-                    labels,
+            if modulation_order is not None:
+                metrics.append(
+                    self.format_metric(
+                        "cablemodem_downstream_modulation_order",
+                        modulation_order,
+                        labels,
+                    )
                 )
-            )
+            else:
+                self.logger.warning(
+                    f"Unknown modulation '{channel.get('modulation')}' for downstream channel {channel_id}, skipping modulation metric"
+                )
 
             # Basic metrics
-            metrics.append(
-                self.format_metric(
-                    "cablemodem_downstream_frequency",
-                    channel.get("frequency", 0),
-                    labels,
+            frequency = channel.get("frequency", 0)
+            if frequency != 0 or channel_type != "ofdm":
+                metrics.append(
+                    self.format_metric(
+                        "cablemodem_downstream_frequency",
+                        frequency,
+                        labels,
+                    )
                 )
-            )
 
             # SNR (use rxMer for OFDM, snr for SC-QAM)
             snr_value = channel.get("rxMer") if channel_type == "ofdm" else channel.get("snr", 0)
-            metrics.append(self.format_metric("cablemodem_downstream_snr", snr_value, labels))
+            if snr_value != 0 or channel_type != "ofdm":
+                metrics.append(self.format_metric("cablemodem_downstream_snr_db", snr_value, labels))
 
             # Power (normalize for DOCSIS 3.1)
             power = self.normalize_power(channel.get("power", 0), channel_type)
@@ -162,17 +177,17 @@ class VMStatsPublisher:
                 self.format_metric("cablemodem_downstream_power_dbmv", power, labels)
             )
 
-            # Error counts
+            # Error counts (counters with _total suffix)
             metrics.append(
                 self.format_metric(
-                    "cablemodem_downstream_corrected_errors",
+                    "cablemodem_downstream_corrected_errors_total",
                     channel.get("correctedErrors", 0),
                     labels,
                 )
             )
             metrics.append(
                 self.format_metric(
-                    "cablemodem_downstream_uncorrected_errors",
+                    "cablemodem_downstream_uncorrected_errors_total",
                     channel.get("uncorrectedErrors", 0),
                     labels,
                 )
@@ -186,27 +201,37 @@ class VMStatsPublisher:
 
             # OFDM-specific metrics
             if channel_type == "ofdm":
-                metrics.append(
-                    self.format_metric(
-                        "cablemodem_downstream_channel_width",
-                        channel.get("channelWidth", 0),
-                        labels,
+                channel_width = channel.get("channelWidth", 0)
+                if channel_width != 0:
+                    metrics.append(
+                        self.format_metric(
+                            "cablemodem_downstream_channel_width",
+                            channel_width,
+                            labels,
+                        )
                     )
-                )
-                metrics.append(
-                    self.format_metric(
-                        "cablemodem_downstream_fft_type",
-                        f'"{channel.get("fftType", "")}"',
-                        labels,
+                fft_size = self.map_fft_size(channel.get("fftType", ""))
+                if fft_size is not None:
+                    metrics.append(
+                        self.format_metric(
+                            "cablemodem_downstream_fft_size",
+                            fft_size,
+                            labels,
+                        )
                     )
-                )
-                metrics.append(
-                    self.format_metric(
-                        "cablemodem_downstream_active_subcarriers",
-                        channel.get("numberOfActiveSubCarriers", 0),
-                        labels,
+                elif channel.get("fftType"):
+                    self.logger.warning(
+                        f"Unknown FFT type '{channel.get('fftType')}' for downstream channel {channel_id}, skipping FFT size metric"
                     )
-                )
+                active_subcarriers = channel.get("numberOfActiveSubCarriers", 0)
+                if active_subcarriers != 0:
+                    metrics.append(
+                        self.format_metric(
+                            "cablemodem_downstream_active_subcarriers",
+                            active_subcarriers,
+                            labels,
+                        )
+                    )
 
         return metrics
 
@@ -218,7 +243,7 @@ class VMStatsPublisher:
         for channel in channels:
             channel_id = channel.get("channelId")
             channel_type = channel.get("channelType", "")
-            modulation_name, modulation_order = self.map_modulation(channel.get("modulation", ""))
+            modulation_order = self.map_modulation(channel.get("modulation", ""))
 
             # Determine scheme label
             if channel_type == "ofdma":
@@ -234,22 +259,29 @@ class VMStatsPublisher:
             }
 
             # Modulation order metric (numeric, not a label)
-            metrics.append(
-                self.format_metric(
-                    "cablemodem_upstream_modulation_order",
-                    modulation_order,
-                    labels,
+            if modulation_order is not None:
+                metrics.append(
+                    self.format_metric(
+                        "cablemodem_upstream_modulation_order",
+                        modulation_order,
+                        labels,
+                    )
                 )
-            )
+            else:
+                self.logger.warning(
+                    f"Unknown modulation '{channel.get('modulation')}' for upstream channel {channel_id}, skipping modulation metric"
+                )
 
             # Basic metrics
-            metrics.append(
-                self.format_metric(
-                    "cablemodem_upstream_frequency",
-                    channel.get("frequency", 0),
-                    labels,
+            frequency = channel.get("frequency", 0)
+            if frequency != 0 or channel_type != "ofdma":
+                metrics.append(
+                    self.format_metric(
+                        "cablemodem_upstream_frequency",
+                        frequency,
+                        labels,
+                    )
                 )
-            )
 
             # Power (normalize for DOCSIS 3.1)
             power = self.normalize_power(channel.get("power", 0), channel_type)
@@ -257,39 +289,41 @@ class VMStatsPublisher:
 
             # Symbol rate (ATDMA only)
             if channel_type == "atdma":
-                metrics.append(
-                    self.format_metric(
-                        "cablemodem_upstream_symbol_rate",
-                        channel.get("symbolRate", 0),
-                        labels,
+                symbol_rate = channel.get("symbolRate", 0)
+                if symbol_rate != 0:
+                    metrics.append(
+                        self.format_metric(
+                            "cablemodem_upstream_symbol_rate",
+                            symbol_rate,
+                            labels,
+                        )
                     )
-                )
 
-            # Timeout counts
+            # Timeout counts (counters with _total suffix)
             metrics.append(
                 self.format_metric(
-                    "cablemodem_upstream_t1_timeout",
+                    "cablemodem_upstream_t1_timeouts_total",
                     channel.get("t1Timeout", 0),
                     labels,
                 )
             )
             metrics.append(
                 self.format_metric(
-                    "cablemodem_upstream_t2_timeout",
+                    "cablemodem_upstream_t2_timeouts_total",
                     channel.get("t2Timeout", 0),
                     labels,
                 )
             )
             metrics.append(
                 self.format_metric(
-                    "cablemodem_upstream_t3_timeout",
+                    "cablemodem_upstream_t3_timeouts_total",
                     channel.get("t3Timeout", 0),
                     labels,
                 )
             )
             metrics.append(
                 self.format_metric(
-                    "cablemodem_upstream_t4_timeout",
+                    "cablemodem_upstream_t4_timeouts_total",
                     channel.get("t4Timeout", 0),
                     labels,
                 )
@@ -301,27 +335,37 @@ class VMStatsPublisher:
 
             # OFDMA-specific metrics
             if channel_type == "ofdma":
-                metrics.append(
-                    self.format_metric(
-                        "cablemodem_upstream_channel_width",
-                        channel.get("channelWidth", 0),
-                        labels,
+                channel_width = channel.get("channelWidth", 0)
+                if channel_width != 0:
+                    metrics.append(
+                        self.format_metric(
+                            "cablemodem_upstream_channel_width",
+                            channel_width,
+                            labels,
+                        )
                     )
-                )
-                metrics.append(
-                    self.format_metric(
-                        "cablemodem_upstream_fft_type",
-                        f'"{channel.get("fftType", "")}"',
-                        labels,
+                fft_size = self.map_fft_size(channel.get("fftType", ""))
+                if fft_size is not None:
+                    metrics.append(
+                        self.format_metric(
+                            "cablemodem_upstream_fft_size",
+                            fft_size,
+                            labels,
+                        )
                     )
-                )
-                metrics.append(
-                    self.format_metric(
-                        "cablemodem_upstream_active_subcarriers",
-                        channel.get("numberOfActiveSubCarriers", 0),
-                        labels,
+                elif channel.get("fftType"):
+                    self.logger.warning(
+                        f"Unknown FFT type '{channel.get('fftType')}' for upstream channel {channel_id}, skipping FFT size metric"
                     )
-                )
+                active_subcarriers = channel.get("numberOfActiveSubCarriers", 0)
+                if active_subcarriers != 0:
+                    metrics.append(
+                        self.format_metric(
+                            "cablemodem_upstream_active_subcarriers",
+                            active_subcarriers,
+                            labels,
+                        )
+                    )
 
         return metrics
 

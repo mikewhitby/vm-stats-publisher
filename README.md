@@ -134,10 +134,10 @@ Note: `--prometheus-url` is not required in dry-run mode, and `--superhub-url` c
 ### Downstream Metrics (SC-QAM)
 
 - `cablemodem_downstream_frequency{channel, scheme}`
-- `cablemodem_downstream_snr{channel, scheme}`
+- `cablemodem_downstream_snr_db{channel, scheme}`
 - `cablemodem_downstream_power_dbmv{channel, scheme}`
-- `cablemodem_downstream_corrected_errors{channel, scheme}`
-- `cablemodem_downstream_uncorrected_errors{channel, scheme}`
+- `cablemodem_downstream_corrected_errors_total{channel, scheme}`
+- `cablemodem_downstream_uncorrected_errors_total{channel, scheme}`
 - `cablemodem_downstream_lock_status{channel, scheme}` (0=unlocked, 1=locked)
 - `cablemodem_downstream_modulation_order{channel, scheme}` - Numeric modulation order (e.g., 64 for QAM64, 256 for QAM256)
 
@@ -145,7 +145,7 @@ Note: `--prometheus-url` is not required in dry-run mode, and `--superhub-url` c
 
 - All SC-QAM metrics plus:
 - `cablemodem_downstream_channel_width{channel, scheme}`
-- `cablemodem_downstream_fft_type{channel, scheme}`
+- `cablemodem_downstream_fft_size{channel, scheme}` - Numeric FFT size (e.g., 4096 for 4K)
 - `cablemodem_downstream_active_subcarriers{channel, scheme}`
 
 ### Upstream Metrics (ATDMA)
@@ -153,10 +153,10 @@ Note: `--prometheus-url` is not required in dry-run mode, and `--superhub-url` c
 - `cablemodem_upstream_frequency{channel, scheme}`
 - `cablemodem_upstream_power_dbmv{channel, scheme}`
 - `cablemodem_upstream_symbol_rate{channel, scheme}`
-- `cablemodem_upstream_t1_timeout{channel, scheme}`
-- `cablemodem_upstream_t2_timeout{channel, scheme}`
-- `cablemodem_upstream_t3_timeout{channel, scheme}`
-- `cablemodem_upstream_t4_timeout{channel, scheme}`
+- `cablemodem_upstream_t1_timeouts_total{channel, scheme}`
+- `cablemodem_upstream_t2_timeouts_total{channel, scheme}`
+- `cablemodem_upstream_t3_timeouts_total{channel, scheme}`
+- `cablemodem_upstream_t4_timeouts_total{channel, scheme}`
 - `cablemodem_upstream_lock_status{channel, scheme}` (0=unlocked, 1=locked)
 - `cablemodem_upstream_modulation_order{channel, scheme}` - Numeric modulation order (e.g., 64 for QAM64, 256 for QAM256)
 
@@ -164,7 +164,7 @@ Note: `--prometheus-url` is not required in dry-run mode, and `--superhub-url` c
 
 - All ATDMA metrics (except symbol_rate) plus:
 - `cablemodem_upstream_channel_width{channel, scheme}`
-- `cablemodem_upstream_fft_type{channel, scheme}`
+- `cablemodem_upstream_fft_size{channel, scheme}` - Numeric FFT size (e.g., 2048 for 2K)
 - `cablemodem_upstream_active_subcarriers{channel, scheme}`
 
 ### Service Flow Metrics
@@ -192,14 +192,17 @@ Note: `--prometheus-url` is not required in dry-run mode, and `--superhub-url` c
 - `direction` - Service flow direction (downstream/upstream)
 - `target` - Ping target hostname or IP address
 
-## Modulation Order Metric
+## Modulation Metric
 
-Modulation is exposed as a numeric metric (`cablemodem_downstream_modulation_order` and `cablemodem_upstream_modulation_order`) rather than a label. This is because modulation can change dynamically over time (e.g., QAM64 ↔ QAM32), and when used as a label, each change creates a new time series, causing fragmented graphs and broken state timelines in Grafana. By exposing it as a numeric metric, Grafana can show modulation transitions cleanly without creating new series every time modulation changes.
+Modulation is exposed as a numeric metric (`cablemodem_downstream_modulation_order` and `cablemodem_upstream_modulation_order`) rather than a label. This is because modulation can change dynamically over time (e.g., QAM64 ↔ QAM32), and when used as a label, each change creates a new time series, causing fragmented graphs and broken state timelines in Grafana. By exposing it as a metric value (not a label), Grafana can show modulation transitions cleanly without creating new series every time modulation changes.
+
+Unknown or unsupported modulation values are omitted entirely with a warning log entry.
 
 ## Data Normalization
 
 - **Power values**: DOCSIS 3.1 channels (OFDM downstream, OFDMA upstream) return power values 10x greater than DOCSIS 3.0 channels. These are automatically divided by 10 for normalization.
 - **SNR values**: For OFDM channels, rxMer is used instead of snr.
+- **Zero value omission**: For OFDM/OFDMA channels, metrics that are not applicable (such as frequency or SNR) are omitted entirely instead of reporting zero values. This prevents fake data from being stored in the metrics backend.
 
 ## Running Locally (Without Docker)
 
