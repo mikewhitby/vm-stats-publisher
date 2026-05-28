@@ -432,8 +432,12 @@ class VMStatsPublisher:
                 headers={"Content-Type": "text/plain"},
             )
             response = urllib.request.urlopen(req, timeout=30)
-            self.logger.debug(f"Successfully published metrics: {response.status}")
-            return True
+            if 200 <= response.status < 300:
+                self.logger.debug(f"Successfully published metrics: {response.status}")
+                return True
+            else:
+                self.logger.error(f"Failed to publish metrics: HTTP {response.status}")
+                return False
         except urllib.error.URLError as e:
             self.logger.error(f"Failed to publish metrics: {e}")
             return False
