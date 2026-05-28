@@ -16,19 +16,23 @@ import urllib.error
 from typing import Dict, List, Optional, Tuple
 
 
-# Modulation mapping
+# Modulation mapping: code -> (name, order)
 MODULATION_MAP = {
-    "qpsk": "QPSK",
-    "qam_8": "QAM8",
-    "qam_16": "QAM16",
-    "qam_32": "QAM32",
-    "qam_64": "QAM64",
-    "qam_128": "QAM128",
-    "qam_256": "QAM256",
-    "other": "rs46",
-    "unsupported": "c_st30",
-    "error": "c_st30",
-    "unknown": "c_cd04",
+    "qpsk": ("QPSK", 4),
+    "qam_8": ("QAM8", 8),
+    "qam_16": ("QAM16", 16),
+    "qam_32": ("QAM32", 32),
+    "qam_64": ("QAM64", 64),
+    "qam_128": ("QAM128", 128),
+    "qam_256": ("QAM256", 256),
+    "qam_512": ("QAM512", 512),
+    "qam_1024": ("QAM1024", 1024),
+    "qam_2048": ("QAM2048", 2048),
+    "qam_4096": ("QAM4096", 4096),
+    "other": ("rs46", 0),
+    "unsupported": ("c_st30", 0),
+    "error": ("c_st30", 0),
+    "unknown": ("c_cd04", 0),
 }
 
 
@@ -90,9 +94,9 @@ class VMStatsPublisher:
             self.logger.error(f"Unexpected error fetching from {url}: {e}")
             return None
 
-    def map_modulation(self, modulation: str) -> str:
-        """Map modulation code to human-readable name"""
-        return MODULATION_MAP.get(modulation, modulation)
+    def map_modulation(self, modulation: str) -> Tuple[str, int]:
+        """Map modulation code to (name, order)"""
+        return MODULATION_MAP.get(modulation, (modulation, 0))
 
     def normalize_power(self, power: float, channel_type: str) -> float:
         """Normalize power value - DOCSIS 3.1 channels return 10x values"""
@@ -115,7 +119,7 @@ class VMStatsPublisher:
         for channel in channels:
             channel_id = channel.get("channelId")
             channel_type = channel.get("channelType", "")
-            modulation = self.map_modulation(channel.get("modulation", ""))
+            modulation_name, modulation_order = self.map_modulation(channel.get("modulation", ""))
 
             # Determine scheme label
             if channel_type == "ofdm":
@@ -127,9 +131,17 @@ class VMStatsPublisher:
 
             labels = {
                 "channel": f"{channel_id:02d}",
-                "modulation": modulation,
                 "scheme": scheme,
             }
+
+            # Modulation order metric (numeric, not a label)
+            metrics.append(
+                self.format_metric(
+                    "cablemodem_downstream_modulation_order",
+                    modulation_order,
+                    labels,
+                )
+            )
 
             # Basic metrics
             metrics.append(
@@ -206,7 +218,7 @@ class VMStatsPublisher:
         for channel in channels:
             channel_id = channel.get("channelId")
             channel_type = channel.get("channelType", "")
-            modulation = self.map_modulation(channel.get("modulation", ""))
+            modulation_name, modulation_order = self.map_modulation(channel.get("modulation", ""))
 
             # Determine scheme label
             if channel_type == "ofdma":
@@ -218,9 +230,17 @@ class VMStatsPublisher:
 
             labels = {
                 "channel": f"{channel_id:02d}",
-                "modulation": modulation,
                 "scheme": scheme,
             }
+
+            # Modulation order metric (numeric, not a label)
+            metrics.append(
+                self.format_metric(
+                    "cablemodem_upstream_modulation_order",
+                    modulation_order,
+                    labels,
+                )
+            )
 
             # Basic metrics
             metrics.append(
