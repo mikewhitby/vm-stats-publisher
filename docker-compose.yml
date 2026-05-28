@@ -1,0 +1,8 @@
+services:
+  vm-stats-publisher:
+    image: ghcr.io/mikewhitby/vm-stats-publisher:latest
+    container_name: vm-stats-publisher
+    restart: unless-stopped
+    environment:
+      - PROMETHEUS_URL=http://{your_prometheus_host}:{port}/api/v1/import/prometheus
+      - PING_TARGETS={some_hosts_to_ping}
