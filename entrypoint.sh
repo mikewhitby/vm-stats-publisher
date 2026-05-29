@@ -19,6 +19,11 @@ if [ -n "$INTERVAL" ]; then
     CMD="$CMD --interval $INTERVAL"
 fi
 
+# SuperHub timeout
+if [ -n "$SUPERHUB_TIMEOUT" ]; then
+    CMD="$CMD --superhub-timeout $SUPERHUB_TIMEOUT"
+fi
+
 # Ping targets (space-separated)
 if [ -n "$PING_TARGETS" ]; then
     for target in $PING_TARGETS; do

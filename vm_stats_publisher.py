@@ -52,6 +52,7 @@ class VMStatsPublisher:
         ping_targets: Optional[List[str]] = None,
         ping_count: int = 3,
         ping_timeout: int = 2,
+        superhub_timeout: int = 10,
     ):
         self.superhub_url = superhub_url.rstrip("/")
         self.prometheus_url = prometheus_url
@@ -60,6 +61,7 @@ class VMStatsPublisher:
         self.ping_targets = ping_targets or []
         self.ping_count = ping_count
         self.ping_timeout = ping_timeout
+        self.superhub_timeout = superhub_timeout
 
         # Setup logging
         log_level = logging.DEBUG if verbose else logging.INFO
@@ -85,29 +87,33 @@ class VMStatsPublisher:
 
         self.ssl_context = ssl._create_unverified_context()
 
-    def fetch_json(self, endpoint: str) -> Optional[Dict]:
-        """Fetch JSON data from SuperHub endpoint"""
+    def fetch_json(self, endpoint: str) -> Tuple[Optional[Dict], Optional[int], bool]:
+        """Fetch JSON data from SuperHub endpoint. Returns (data, status_code, success)"""
         url = f"{self.superhub_url}{endpoint}"
         self.logger.debug(f"Fetching from {url}")
 
         try:
             start_time = time.time()
             req = urllib.request.Request(url)
-            response = urllib.request.urlopen(req, context=self.ssl_context, timeout=30)
+            response = urllib.request.urlopen(req, context=self.ssl_context, timeout=self.superhub_timeout)
             elapsed = time.time() - start_time
 
             data = json.loads(response.read().decode("utf-8"))
             self.logger.debug(f"Successfully fetched data from {endpoint} (HTTP {response.status}) in {elapsed:.2f}s")
-            return data
+            return data, response.status, True
+        except urllib.error.HTTPError as e:
+            status_code = e.code if hasattr(e, 'code') else None
+            self.logger.warning(f"Failed to fetch from {url}: HTTP {status_code}")
+            return None, status_code, False
         except urllib.error.URLError as e:
             self.logger.error(f"Failed to fetch from {url}: {e}")
-            return None
+            return None, None, False
         except json.JSONDecodeError as e:
             self.logger.error(f"Failed to parse JSON from {url}: {e}")
-            return None
+            return None, None, False
         except Exception as e:
             self.logger.error(f"Unexpected error fetching from {url}: {e}")
-            return None
+            return None, None, False
 
     def map_modulation(self, modulation: str) -> Optional[int]:
         """Map modulation code to numeric order, return None for unknown/unsupported"""
@@ -590,18 +596,34 @@ class VMStatsPublisher:
             }
 
             # Wait for HTTP requests to complete
-            downstream_data = future_downstream.result()
-            upstream_data = future_upstream.result()
-            serviceflows_data = future_serviceflows.result()
+            downstream_data, downstream_status, downstream_ok = future_downstream.result()
+            upstream_data, upstream_status, upstream_ok = future_upstream.result()
+            serviceflows_data, serviceflows_status, serviceflows_ok = future_serviceflows.result()
 
-            if not all([downstream_data, upstream_data, serviceflows_data]):
-                self.logger.error("Failed to fetch data from one or more endpoints")
-                return False
+            # Add endpoint status metrics
+            endpoints = {
+                "downstream": (downstream_ok, downstream_status),
+                "upstream": (upstream_ok, upstream_status),
+                "serviceflow": (serviceflows_ok, serviceflows_status),
+            }
 
-            # Parse modem data into metrics
-            metrics.extend(self.parse_downstream(downstream_data))
-            metrics.extend(self.parse_upstream(upstream_data))
-            metrics.extend(self.parse_serviceflows(serviceflows_data))
+            for endpoint_name, (ok, status) in endpoints.items():
+                up_value = 1 if ok else 0
+                metrics.append(
+                    self.format_metric("cablemodem_endpoint_up", up_value, {"endpoint": endpoint_name})
+                )
+                if status is not None:
+                    metrics.append(
+                        self.format_metric("cablemodem_endpoint_http_status", status, {"endpoint": endpoint_name})
+                    )
+
+            # Parse modem data into metrics (only if successful)
+            if downstream_ok and downstream_data:
+                metrics.extend(self.parse_downstream(downstream_data))
+            if upstream_ok and upstream_data:
+                metrics.extend(self.parse_upstream(upstream_data))
+            if serviceflows_ok and serviceflows_data:
+                metrics.extend(self.parse_serviceflows(serviceflows_data))
 
             # Wait for pings to complete and parse results
             for future in concurrent.futures.as_completed(future_pings):
@@ -702,6 +724,12 @@ def main():
         help="Polling interval in seconds (default: 30)",
     )
     parser.add_argument(
+        "--superhub-timeout",
+        type=int,
+        default=10,
+        help="SuperHub HTTP request timeout in seconds (default: 10)",
+    )
+    parser.add_argument(
         "--ping-target",
         action="append",
         help="Ping target (can be specified multiple times)",
@@ -744,6 +772,7 @@ def main():
         ping_targets=args.ping_target,
         ping_count=args.ping_count,
         ping_timeout=args.ping_timeout,
+        superhub_timeout=args.superhub_timeout,
     )
 
     publisher.run()
